@@ -39,6 +39,11 @@ async def init_database() -> None:
     """Create tables and seed legal knowledge base if empty."""
     logger.info("Initializing database tables...")
     async with engine.begin() as conn:
+        if "postgres" in settings.DATABASE_URL:
+            try:
+                await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+            except Exception as e:  # noqa: BLE001
+                logger.warning("Could not create vector extension: %s", e)
         await conn.run_sync(Base.metadata.create_all)
 
         # Ensure topic columns exist on system_access table in existing deployments
