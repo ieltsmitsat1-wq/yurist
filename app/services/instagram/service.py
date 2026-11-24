@@ -72,6 +72,52 @@ class InstagramAutomationService:
             "resolved_account_id": self._resolved_business_account_id,
         }
 
+    async def resolve_account_diagnostics(self) -> dict[str, Any]:
+        """Check Graph API token access and linked accounts without exposing the token."""
+        if not settings.INSTAGRAM_ACCESS_TOKEN:
+            return {
+                "graph_token_configured": False,
+                "graph_me_status": None,
+                "linked_accounts": [],
+            }
+
+        headers = {"Authorization": f"Bearer {settings.INSTAGRAM_ACCESS_TOKEN}"}
+        result: dict[str, Any] = {
+            "graph_token_configured": True,
+            "graph_me_status": None,
+            "linked_accounts": [],
+        }
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            try:
+                me_response = await client.get(
+                    f"https://graph.facebook.com/{settings.INSTAGRAM_GRAPH_API_VERSION}/me",
+                    headers=headers,
+                )
+                result["graph_me_status"] = me_response.status_code
+
+                accounts_response = await client.get(
+                    f"https://graph.facebook.com/{settings.INSTAGRAM_GRAPH_API_VERSION}/me/accounts",
+                    headers=headers,
+                    params={"fields": "id,name,instagram_business_account{id,name,username}"},
+                )
+                if accounts_response.status_code == 200:
+                    result["linked_accounts"] = [
+                        {
+                            "page_id": str(page.get("id") or ""),
+                            "page_name": str(page.get("name") or ""),
+                            "instagram_account_id": str(
+                                (page.get("instagram_business_account") or {}).get("id") or ""
+                            ),
+                            "instagram_username": str(
+                                (page.get("instagram_business_account") or {}).get("username") or ""
+                            ),
+                        }
+                        for page in accounts_response.json().get("data") or []
+                    ]
+            except Exception as exc:  # noqa: BLE001
+                result["graph_error"] = str(exc)
+        return result
+
     def record_webhook_request(self) -> None:
         """Record a webhook delivery attempt without exposing request credentials."""
         self._diagnostics["webhook_requests"] += 1

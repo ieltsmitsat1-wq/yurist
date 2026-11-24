@@ -25,7 +25,11 @@ _instagram_service = InstagramAutomationService()
 @router.get("/diagnostics")
 async def instagram_diagnostics() -> dict[str, Any]:
     """Return non-sensitive runtime diagnostics for the Instagram integration."""
-    return _instagram_service.get_diagnostics()
+    account_diagnostics = await _instagram_service.resolve_account_diagnostics()
+    return {
+        **_instagram_service.get_diagnostics(),
+        **account_diagnostics,
+    }
 
 
 @router.get("/webhook", response_class=PlainTextResponse)
