@@ -50,6 +50,7 @@ class InstagramAutomationService:
         self.policy_skill = policy_skill or MetaPolicyEnforcerSkill()
         self.conversion_skill = conversion_skill or LeadConversionSkill()
         self.trigger_skill = trigger_skill or StoryAndAdsTriggerSkill()
+        self._resolved_business_account_id: str | None = None
 
     def verify_webhook(self, mode: str | None, token: str | None, challenge: str | None) -> str | None:
         """Verify Meta Webhook subscription token and return challenge string if valid."""
@@ -463,6 +464,42 @@ class InstagramAutomationService:
             logger.error("Meta Graph API request error to %s: %s", url, e)
             return False
 
+    async def resolve_instagram_business_account_id(self) -> str | None:
+        """Resolve the connected Instagram Business/Professional account ID from linked Facebook Pages."""
+        if self._resolved_business_account_id:
+            return self._resolved_business_account_id
+        if not settings.INSTAGRAM_ACCESS_TOKEN:
+            return None
+
+        endpoint = (
+            f"/{settings.INSTAGRAM_GRAPH_API_VERSION}/me/accounts"
+            "?fields=instagram_business_account{id,name,username}"
+        )
+        url = f"https://graph.facebook.com{endpoint}"
+        headers = {"Authorization": f"Bearer {settings.INSTAGRAM_ACCESS_TOKEN}"}
+
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.get(url, headers=headers)
+                if response.status_code != 200:
+                    logger.error(
+                        "Could not resolve Instagram account: status=%d response=%s",
+                        response.status_code,
+                        response.text[:500],
+                    )
+                    return None
+                for page in response.json().get("data") or []:
+                    account = page.get("instagram_business_account") or {}
+                    account_id = str(account.get("id") or "")
+                    if account_id:
+                        self._resolved_business_account_id = account_id
+                        settings.INSTAGRAM_BUSINESS_ACCOUNT_ID = account_id
+                        logger.info("Resolved Instagram Business Account ID: %s", account_id)
+                        return account_id
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Instagram account resolution failed: %s", exc)
+        return None
+
     async def _download_and_transcribe_audio(self, audio_url: str) -> str:
         """Download audio file from Meta CDN and transcribe."""
         try:
@@ -528,13 +565,13 @@ class InstagramAutomationService:
         redis_client: Any | None = None,
     ) -> bool:
         """Send an Instagram message, using configured account/Page IDs when /me is unavailable."""
-        endpoints = [
-            f"/{settings.INSTAGRAM_GRAPH_API_VERSION}/me/messages",
-        ]
+        endpoints: list[str] = []
+
         if settings.INSTAGRAM_PAGE_ID:
             endpoints.append(
                 f"/{settings.INSTAGRAM_GRAPH_API_VERSION}/{settings.INSTAGRAM_PAGE_ID}/messages"
             )
+
         if (
             settings.INSTAGRAM_BUSINESS_ACCOUNT_ID
             and settings.INSTAGRAM_BUSINESS_ACCOUNT_ID != settings.INSTAGRAM_PAGE_ID
@@ -543,7 +580,18 @@ class InstagramAutomationService:
                 f"/{settings.INSTAGRAM_GRAPH_API_VERSION}/{settings.INSTAGRAM_BUSINESS_ACCOUNT_ID}/messages"
             )
 
-        for endpoint in endpoints:
+        resolved_account_id = await self.resolve_instagram_business_account_id()
+        if resolved_account_id:
+            endpoints.append(
+                f"/{settings.INSTAGRAM_GRAPH_API_VERSION}/{resolved_account_id}/messages"
+            )
+
+        endpoints.append(
+            f"/{settings.INSTAGRAM_GRAPH_API_VERSION}/me/messages",
+        )
+
+        unique_endpoints = list(dict.fromkeys(endpoints))
+        for endpoint in unique_endpoints:
             success = await self._send_meta_request(
                 endpoint=endpoint,
                 method="POST",
