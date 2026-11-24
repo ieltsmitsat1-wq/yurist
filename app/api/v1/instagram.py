@@ -49,17 +49,20 @@ async def handle_instagram_webhook_events(
     db_session: AsyncSession = Depends(get_db_session),  # noqa: B008
 ) -> dict[str, Any]:
     """Receive and process incoming Instagram comments and Direct Messages with HMAC verification."""
+    _instagram_service.record_webhook_request()
     raw_body = await request.body()
 
     # Meta Webhook Security Signature Check (HMAC-SHA256)
     app_secret = settings.INSTAGRAM_APP_SECRET
     if app_secret:
         if not verify_meta_hub_signature(raw_body, x_hub_signature_256, app_secret):
+            _instagram_service.record_webhook_signature(False)
             logger.warning("Rejected Instagram webhook with invalid X-Hub-Signature-256")
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Invalid Meta X-Hub-Signature-256 signature",
             )
+        _instagram_service.record_webhook_signature(True)
     elif settings.ENVIRONMENT.lower() == "production":
         logger.error("Rejecting Instagram webhook: INSTAGRAM_APP_SECRET is not configured in production")
         raise HTTPException(
@@ -72,6 +75,8 @@ async def handle_instagram_webhook_events(
     except Exception as e:  # noqa: BLE001
         logger.warning("Invalid JSON in Instagram webhook: %s", e)
         return {"status": "ignored"}
+
+    _instagram_service.record_webhook_payload(body)
 
     object_type = body.get("object")
     if object_type != "instagram":

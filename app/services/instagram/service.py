@@ -53,6 +53,10 @@ class InstagramAutomationService:
         self._resolved_business_account_id: str | None = None
         self._diagnostics: dict[str, Any] = {
             "webhook_events": 0,
+            "webhook_requests": 0,
+            "last_webhook_object": None,
+            "last_webhook_fields": [],
+            "last_webhook_signature_valid": None,
             "direct_messages": 0,
             "last_inbound_sender": None,
             "last_inbound_text": None,
@@ -67,6 +71,28 @@ class InstagramAutomationService:
             **self._diagnostics,
             "resolved_account_id": self._resolved_business_account_id,
         }
+
+    def record_webhook_request(self) -> None:
+        """Record a webhook delivery attempt without exposing request credentials."""
+        self._diagnostics["webhook_requests"] += 1
+
+    def record_webhook_signature(self, valid: bool) -> None:
+        """Record whether the webhook HMAC signature was accepted."""
+        self._diagnostics["last_webhook_signature_valid"] = valid
+
+    def record_webhook_payload(self, body: dict[str, Any]) -> None:
+        """Record non-sensitive webhook object and field names."""
+        entries = body.get("entry") or []
+        fields: list[str] = []
+        for entry in entries:
+            for change in entry.get("changes") or []:
+                field = str(change.get("field") or "")
+                if field:
+                    fields.append(field)
+            for event in entry.get("messaging") or []:
+                fields.append("messages")
+        self._diagnostics["last_webhook_object"] = str(body.get("object") or "")
+        self._diagnostics["last_webhook_fields"] = list(dict.fromkeys(fields))
 
     def verify_webhook(self, mode: str | None, token: str | None, challenge: str | None) -> str | None:
         """Verify Meta Webhook subscription token and return challenge string if valid."""
