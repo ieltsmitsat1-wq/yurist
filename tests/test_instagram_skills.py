@@ -7,6 +7,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.api.main import create_app
+from app.core.config import settings
 from app.core.redis import InMemoryRedisClient
 from app.services.instagram.audio_stt import MultimodalVoiceDMSkill
 from app.services.instagram.comment_to_dm import CommentToDMSkill
@@ -273,7 +274,10 @@ async def test_instagram_webhook_endpoints(mock_redis: InMemoryRedisClient) -> N
             ],
         }
 
-        with patch("app.api.v1.instagram.get_redis_client", return_value=mock_redis):
+        with (
+            patch("app.api.v1.instagram.get_redis_client", return_value=mock_redis),
+            patch.object(settings, "INSTAGRAM_APP_SECRET", ""),
+        ):
             post_resp = await client.post("/api/v1/instagram/webhook", json=webhook_body)
             assert post_resp.status_code == 200
             assert post_resp.json() == {"status": "ok"}
