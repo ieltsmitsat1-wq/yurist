@@ -98,10 +98,21 @@ export const updateLeadStatus = (id: number, lead_status: string) =>
     method: "PUT",
     body: JSON.stringify({ lead_status }),
   });
+export const updateLeadProfile = (
+  id: number,
+  data: { full_name?: string; phone_number?: string; lead_status?: string }
+) =>
+  fetchApi<{ ok: boolean; full_name: string | null; phone_number: string | null; lead_status: string }>(
+    `/crm/leads/${id}/status`,
+    {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }
+  );
 
 // Inquiries
-export const getInquiries = (risk?: string, limit = 50) =>
-  fetchApi<Inquiry[]>(`/crm/inquiries?limit=${limit}${risk ? `&risk_level=${risk}` : ""}`);
+export const getInquiries = (risk?: string, limit = 50, inquiryStatus?: string) =>
+  fetchApi<Inquiry[]>(`/crm/inquiries?limit=${limit}${risk ? `&risk_level=${risk}` : ""}${inquiryStatus ? `&inquiry_status=${inquiryStatus}` : ""}`);
 export const approveInquiry = (id: number, final_response: string) =>
   fetchApi<{ ok: boolean }>(`/crm/inquiries/${id}/approve`, {
     method: "POST",
@@ -195,6 +206,8 @@ export interface LeadDetail extends Lead {
 export interface Inquiry {
   id: number;
   user_id: number;
+  channel?: string;
+  detected_category?: string | null;
   question_text: string | null;
   stt_transcript: string | null;
   risk_level: string | null;
@@ -324,6 +337,9 @@ export interface Dialog {
   instagram_id?: string | null;
   instagram_username?: string | null;
   channel?: string | null;
+  inquiry_summary?: string | null;
+  detected_category?: string | null;
+  risk_level?: string | null;
 }
 
 export interface ChatMessageItem {
@@ -340,6 +356,22 @@ export interface ChatMessageItem {
 
 export const getDialogs = () => fetchApi<Dialog[]>("/chats");
 export const getMessages = (userId: number) => fetchApi<ChatMessageItem[]>(`/chats/${userId}`);
+export const getReceiptImageBlob = async (userId: number, messageId: number): Promise<Blob> => {
+  const token = getSavedToken() || ADMIN_KEY;
+  const authHeaders: Record<string, string> = token
+    ? {
+        "X-Admin-Key": token,
+        Authorization: `Bearer ${token}`,
+      }
+    : {};
+  const res = await fetch(`${API_BASE}/chats/${userId}/receipts/${messageId}`, {
+    headers: authHeaders,
+  });
+  if (!res.ok) {
+    throw new Error(`Receipt image request failed: ${res.status}`);
+  }
+  return res.blob();
+};
 export const sendLawyerMessage = (userId: number, text: string) =>
   fetchApi<ChatMessageItem>(`/chats/${userId}/send`, {
     method: "POST",

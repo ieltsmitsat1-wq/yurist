@@ -738,6 +738,7 @@ async def handle_business_message(
             is_business=True,
             message_type="photo",
             telegram_message_id=message.message_id,
+            media_url=photo_file_id,
         )
         return
 

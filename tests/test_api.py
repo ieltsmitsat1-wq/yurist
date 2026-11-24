@@ -325,10 +325,16 @@ async def test_crm_lead_status_update():
         # Update status to proposal_sent
         status_res = await client.put(
             f"/api/v1/crm/leads/{user_id}/status",
-            json={"lead_status": "proposal_sent"},
+            json={
+                "lead_status": "paid",
+                "full_name": "Yangilangan ism",
+                "phone_number": "+998901112233",
+            },
         )
         assert status_res.status_code == 200
-        assert status_res.json()["lead_status"] == "proposal_sent"
+        assert status_res.json()["lead_status"] == "paid"
+        assert status_res.json()["full_name"] == "Yangilangan ism"
+        assert status_res.json()["phone_number"] == "+998901112233"
 
 
 @pytest.mark.asyncio

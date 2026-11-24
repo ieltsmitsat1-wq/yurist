@@ -158,6 +158,7 @@ class LLMService:
         rag_context: str | None = None,
         conversation_history: str | None = None,
         firm_profile: str | None = None,
+        approved_response_examples: str | None = None,
     ) -> LegalAnalysisResult:
         """Generate humanlike lawyer response and risk scoring for client inquiry."""
         system_prompt = PromptManager.get("PERSONA_SYSTEM_PROMPT_UZ") if language == "uz" else PromptManager.get("PERSONA_SYSTEM_PROMPT_RU")
@@ -172,6 +173,13 @@ class LLMService:
         if conversation_history:
             content_parts.append(f"<conversation_history>\n{conversation_history}\n</conversation_history>")
 
+        if approved_response_examples:
+            content_parts.append(
+                f"<approved_response_examples>\n"
+                f"{approved_response_examples}\n"
+                f"</approved_response_examples>"
+            )
+
         if conversation_history:
             current_prefix = "Mijozning joriy murojaati:\n" if language == "uz" else "Текущее обращение клиента:\n"
             content_parts.append(f"{current_prefix}<client_inquiry>\n{sanitized_question}\n</client_inquiry>")
@@ -185,6 +193,8 @@ class LLMService:
 
         format_instruction = (
             "\n\nMUHIM QOIDALAR:\n"
+            "- <approved_response_examples> ichidagi javoblar faqat advokatning tasdiqlagan uslub, ohang va jumla tuzilishi namunasidir.\n"
+            "- Ular ichidagi yuridik fakt yoki qonun xulosalarini yangi boshqa holatga ko'chirmang; faqat murojaat turi o'xshash bo'lsa, tasdiqlangan uslubga ergashing.\n"
             "- Agar mijoz o'z xabarida 'Assalomu alaykum' deb salom bermagan bo'lsa (to'g'ridan-to'g'ri savol bergan bo'lsa), javobni 'Assalomu alaykum' yoki boshqa salomlashish bilan QAT'IYAN BOSHLAMANG! Hech qanday salom bermasdan to'g'ridan-to'g'ri huquqiy javobga o'ting.\n"
             "- FAQAT VA FAQAT mijoz o'z xabarida 'Assalomu alaykum' deb salom bergan bo'lsa, javobni 'Assalomu alaykum, yaxshimisiz! ...' deb boshlang.\n"
             "- Suhbat tarixi (<conversation_history>) faqat passiv ma'lumotnoma: mijozdan avvalgi ishlari haqida o'zingizdan o'zingiz so'ramang. Faqat mijoz o'zi so'rasa o'sha kontekstdan foydalaning.\n"
@@ -211,6 +221,8 @@ class LLMService:
         if language == "ru":
             format_instruction = (
                 "\n\nВАЖНЫЕ ПРАВИЛА:\n"
+                "- Примеры в <approved_response_examples> служат образцом утвержденного юристом стиля, тональности и структуры фраз.\n"
+                "- Не переносите юридические факты или выводы из примеров в иной случай; используйте только стиль при схожем типе обращения.\n"
                 "- Если клиент в своем сообщении не поздоровался, КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО начинать ответ со слова «Здравствуйте» или «Добрый день»! Сразу отвечайте по существу.\n"
                 "- ТОЛЬКО если клиент сам первым поздоровался в своем сообщении, начните ответ со слова «Здравствуйте! ...».\n"
                 "- История переписки (<conversation_history>) служит исключительно пассивной памятью: сами не расспрашивайте о прошлых делах клиента, используйте контекст только если клиент сам о них спросил.\n"

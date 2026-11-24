@@ -1,17 +1,22 @@
 """Chat inbox and conversation history endpoints for web admin dashboard."""
 
+import logging
+from io import BytesIO
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.bot_instance import bot
 from app.core.redis import get_redis_client
+from app.db.models.chat_message import ChatMessage
 from app.db.session import get_db_session
 from app.services.chat_service import ChatService
 
 router = APIRouter(prefix="/chats", tags=["chats"])
+logger = logging.getLogger(__name__)
 
 
 class SendMessageRequest(BaseModel):
@@ -50,6 +55,47 @@ async def get_user_messages(
         }
         for m in messages
     ]
+
+
+@router.get("/{user_id}/receipts/{message_id}")
+async def get_receipt_image(
+    user_id: int,
+    message_id: int,
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> Response:
+    """Proxy a stored Telegram receipt image to authenticated admin clients."""
+    stmt = select(ChatMessage).where(
+        ChatMessage.id == message_id,
+        ChatMessage.user_id == user_id,
+        ChatMessage.message_type == "photo",
+    )
+    result = await session.execute(stmt)
+    message = result.scalar_one_or_none()
+    if not message or not message.media_url:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Receipt image not found")
+
+    try:
+        file_info = await bot.get_file(message.media_url)
+        if not file_info.file_path:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Receipt file is no longer available",
+            )
+        buffer = BytesIO()
+        await bot.download_file(file_info.file_path, destination=buffer)
+        return Response(
+            content=buffer.getvalue(),
+            media_type="image/jpeg",
+            headers={"Cache-Control": "private, max-age=300"},
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("Failed to load receipt image %d for user %d: %s", message_id, user_id, exc)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Receipt image could not be loaded",
+        ) from exc
 
 
 @router.post("/{user_id}/send", status_code=status.HTTP_201_CREATED)

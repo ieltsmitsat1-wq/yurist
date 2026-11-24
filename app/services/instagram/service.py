@@ -418,10 +418,8 @@ class InstagramAutomationService:
                 use_human_agent_tag=use_tag,
             )
 
-            await self._send_meta_request(
-                endpoint=f"/{settings.INSTAGRAM_GRAPH_API_VERSION}/me/messages",
-                method="POST",
-                json_body=payload,
+            await self._send_instagram_message(
+                payload=payload,
                 redis_client=redis_client,
             )
 
@@ -438,8 +436,8 @@ class InstagramAutomationService:
     ) -> bool:
         """Send authenticated HTTP request to Meta Graph API."""
         if not settings.INSTAGRAM_ACCESS_TOKEN:
-            logger.info("INSTAGRAM_ACCESS_TOKEN not set; skipping live Graph API HTTP request")
-            return True
+            logger.error("INSTAGRAM_ACCESS_TOKEN is not configured")
+            return False
 
         url = f"https://graph.facebook.com{endpoint}"
         headers = {
@@ -450,7 +448,17 @@ class InstagramAutomationService:
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 resp = await client.request(method, url, json=json_body, headers=headers)
-                return resp.status_code in (200, 201)
+                if resp.status_code in (200, 201):
+                    return True
+
+                response_text = resp.text[:500]
+                logger.error(
+                    "Meta Graph API request failed: endpoint=%s status=%d response=%s",
+                    endpoint,
+                    resp.status_code,
+                    response_text,
+                )
+                return False
         except Exception as e:  # noqa: BLE001
             logger.error("Meta Graph API request error to %s: %s", url, e)
             return False
@@ -491,10 +499,8 @@ class InstagramAutomationService:
             use_human_agent_tag=use_tag,
         )
 
-        success = await self._send_meta_request(
-            endpoint=f"/{settings.INSTAGRAM_GRAPH_API_VERSION}/me/messages",
-            method="POST",
-            json_body=payload,
+        success = await self._send_instagram_message(
+            payload=payload,
             redis_client=redis_client,
         )
 
@@ -515,3 +521,35 @@ class InstagramAutomationService:
                 logger.error("Failed recording manual lawyer reply to DB: %s", e)
 
         return success
+
+    async def _send_instagram_message(
+        self,
+        payload: dict[str, Any],
+        redis_client: Any | None = None,
+    ) -> bool:
+        """Send an Instagram message, using configured account/Page IDs when /me is unavailable."""
+        endpoints = [
+            f"/{settings.INSTAGRAM_GRAPH_API_VERSION}/me/messages",
+        ]
+        if settings.INSTAGRAM_PAGE_ID:
+            endpoints.append(
+                f"/{settings.INSTAGRAM_GRAPH_API_VERSION}/{settings.INSTAGRAM_PAGE_ID}/messages"
+            )
+        if (
+            settings.INSTAGRAM_BUSINESS_ACCOUNT_ID
+            and settings.INSTAGRAM_BUSINESS_ACCOUNT_ID != settings.INSTAGRAM_PAGE_ID
+        ):
+            endpoints.append(
+                f"/{settings.INSTAGRAM_GRAPH_API_VERSION}/{settings.INSTAGRAM_BUSINESS_ACCOUNT_ID}/messages"
+            )
+
+        for endpoint in endpoints:
+            success = await self._send_meta_request(
+                endpoint=endpoint,
+                method="POST",
+                json_body=payload,
+                redis_client=redis_client,
+            )
+            if success:
+                return True
+        return False

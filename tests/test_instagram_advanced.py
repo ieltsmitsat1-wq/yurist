@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from app.core.config import settings
 from app.db.base import Base
 from app.db.models.user import User
 from app.services.chat_service import ChatService
@@ -169,6 +170,32 @@ async def test_window_watcher_sends_warning(async_session: AsyncSession) -> None
 # ==========================================
 # 3. Phase 5: Web Admin Live Chat & Handoff
 # ==========================================
+
+
+@pytest.mark.asyncio
+async def test_instagram_manual_send_tries_configured_endpoints() -> None:
+    """Use Page/IG account fallbacks when the generic /me Instagram send endpoint fails."""
+    service = InstagramAutomationService()
+    redis = MockRedis()
+
+    with (
+        patch.object(settings, "INSTAGRAM_PAGE_ID", "page_123"),
+        patch.object(settings, "INSTAGRAM_BUSINESS_ACCOUNT_ID", "ig_456"),
+        patch.object(service, "_send_meta_request", new_callable=AsyncMock) as mock_send,
+    ):
+        mock_send.side_effect = [False, True]
+        success = await service._send_instagram_message(
+            payload={
+                "recipient": {"id": "ig_user_1"},
+                "message": {"text": "Yordam bera olaman"},
+                "messaging_type": "RESPONSE",
+            },
+            redis_client=redis,
+        )
+
+    assert success is True
+    assert mock_send.await_count == 2
+    assert "/page_123/messages" in mock_send.await_args_list[1].kwargs["endpoint"]
 
 
 @pytest.mark.asyncio

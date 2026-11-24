@@ -80,6 +80,7 @@ class Settings(BaseSettings):
 
     # Instagram DM Automation
     INSTAGRAM_PAGE_ID: str = Field(default="")
+    INSTAGRAM_BUSINESS_ACCOUNT_ID: str = Field(default="")
     INSTAGRAM_ACCESS_TOKEN: str = Field(default="")
     INSTAGRAM_APP_SECRET: str = Field(default="")
     INSTAGRAM_VERIFY_TOKEN: str = Field(default="yurist_instagram_verify_token")

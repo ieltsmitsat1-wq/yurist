@@ -57,7 +57,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
       {/* Sidebar Wrapper */}
       <div 
-        className={`fixed inset-y-0 left-0 z-50 transform md:relative md:translate-x-0 transition duration-200 ease-in-out ${
+        className={`fixed inset-y-0 left-0 z-50 w-64 transform md:relative md:w-16 md:hover:w-64 md:translate-x-0 transition-[width,transform] duration-200 ease-in-out ${
           sidebarOpen ? "translate-x-0" : "-translate-x-full"
         }`}
       >

@@ -54,12 +54,15 @@ async def list_leads(
 async def list_inquiries(
     session: Annotated[AsyncSession, Depends(get_db_session)],
     risk_level: str | None = None,
+    inquiry_status: str | None = None,
     limit: int = 50,
 ) -> list[dict[str, Any]]:
     """List legal inquiries, risk evaluations, and express audits."""
     stmt = select(Inquiry).order_by(Inquiry.created_at.desc()).limit(limit)
     if risk_level:
         stmt = stmt.where(Inquiry.risk_level == risk_level)
+    if inquiry_status:
+        stmt = stmt.where(Inquiry.status == inquiry_status)
     res = await session.execute(stmt)
     inquiries = res.scalars().all()
 
@@ -67,6 +70,8 @@ async def list_inquiries(
         {
             "id": inq.id,
             "user_id": inq.user_id,
+            "channel": inq.channel,
+            "detected_category": inq.detected_category,
             "question_text": inq.question_text,
             "stt_transcript": inq.stt_transcript,
             "risk_level": inq.risk_level,
@@ -115,13 +120,20 @@ async def approve_inquiry(
     session: Annotated[AsyncSession, Depends(get_db_session)],
 ) -> dict[str, Any]:
     """Lawyer approves or edits an AI draft legal response."""
+    final_response = payload.final_response.strip()
+    if not final_response:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Tasdiqlash uchun javob bo'sh bo'lmasligi kerak",
+        )
+
     stmt = select(Inquiry).where(Inquiry.id == inquiry_id)
     res = await session.execute(stmt)
     inquiry = res.scalar_one_or_none()
     if not inquiry:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inquiry not found")
 
-    inquiry.final_response = payload.final_response
+    inquiry.final_response = final_response
     inquiry.status = "approved"
     inquiry.lawyer_id = payload.lawyer_id
     inquiry.answered_at = datetime.now(UTC)
@@ -137,6 +149,14 @@ async def approve_inquiry(
 
 class LeadStatusUpdate(BaseModel):
     lead_status: str  # new, express_audit, proposal_sent, appointment_booked, closed_won
+    full_name: str | None = None
+    phone_number: str | None = None
+
+
+class LeadProfileUpdate(BaseModel):
+    full_name: str | None = None
+    phone_number: str | None = None
+    lead_status: str | None = None
 
 
 @router.get("/leads/{user_id}")
@@ -192,6 +212,47 @@ async def update_lead_status(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
     user.lead_status = payload.lead_status
+    if payload.full_name is not None:
+        user.full_name = payload.full_name.strip() or None
+    if payload.phone_number is not None:
+        user.phone_number = payload.phone_number.strip() or None
     await session.commit()
     await session.refresh(user)
-    return {"ok": True, "id": user.id, "lead_status": user.lead_status}
+    return {
+        "ok": True,
+        "id": user.id,
+        "full_name": user.full_name,
+        "phone_number": user.phone_number,
+        "lead_status": user.lead_status,
+    }
+
+
+@router.put("/leads/{user_id}/profile")
+async def update_lead_profile(
+    user_id: int,
+    payload: LeadProfileUpdate,
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> dict[str, Any]:
+    """Update editable customer profile fields from CRM inbox."""
+    stmt = select(User).where(User.id == user_id)
+    res = await session.execute(stmt)
+    user = res.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    if payload.full_name is not None:
+        user.full_name = payload.full_name.strip() or None
+    if payload.phone_number is not None:
+        user.phone_number = payload.phone_number.strip() or None
+    if payload.lead_status is not None:
+        user.lead_status = payload.lead_status
+
+    await session.commit()
+    await session.refresh(user)
+    return {
+        "ok": True,
+        "id": user.id,
+        "full_name": user.full_name,
+        "phone_number": user.phone_number,
+        "lead_status": user.lead_status,
+    }

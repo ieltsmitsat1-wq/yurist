@@ -732,4 +732,5 @@ async def handle_photo_receipt(
         text="[To'lov cheki skrinshoti yuklandi]",
         message_type="photo",
         telegram_message_id=message.message_id,
+        media_url=photo_file_id,
     )

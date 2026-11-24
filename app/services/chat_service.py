@@ -18,6 +18,51 @@ logger = logging.getLogger(__name__)
 class ChatService:
     """Manages recording and querying unified chat conversations between users, bot, and lawyers."""
 
+    @staticmethod
+    def build_chat_summary(messages: Sequence[ChatMessage]) -> str | None:
+        """Build a compact customer inquiry summary directly from chat history."""
+        ignored_phrases = (
+            "assalomu alaykum",
+            "assalom",
+            "salom",
+            "privet",
+            "здравствуйте",
+            "привет",
+        )
+        snippets: list[str] = []
+
+        for message in messages:
+            if message.sender_type != "user" or not message.text:
+                continue
+            clean_text = message.text.strip().split("```json")[0].strip()
+            normalized = " ".join(clean_text.split())
+            lowered = normalized.lower()
+            if not normalized or lowered in ignored_phrases:
+                continue
+            greeting_prefixes = tuple(
+                prefix
+                for phrase in ignored_phrases
+                for prefix in (f"{phrase} ", f"{phrase},")
+            )
+            if lowered.startswith(greeting_prefixes):
+                for phrase in ignored_phrases:
+                    if lowered.startswith(f"{phrase} "):
+                        normalized = normalized[len(phrase):].strip()
+                        break
+                    if lowered.startswith(f"{phrase},"):
+                        normalized = normalized[len(phrase) + 1:].strip()
+                        break
+            if normalized and normalized not in snippets:
+                snippets.append(normalized)
+                if len(snippets) > 3:
+                    snippets.pop(0)
+
+        if not snippets:
+            return None
+
+        summary = " · ".join(snippets)
+        return summary[:300].rstrip(" ·") or None
+
     @classmethod
     async def log_message(
         cls,
@@ -207,6 +252,35 @@ class ChatService:
                     last_sender = "bot" if (inq.final_response or inq.ai_draft_response) else "user"
                     last_time = inq.created_at.isoformat() if inq.created_at else None
 
+            stmt_latest_inq = (
+                select(Inquiry)
+                .where(Inquiry.user_id == u.id)
+                .order_by(Inquiry.created_at.desc())
+                .limit(1)
+            )
+            res_latest_inq = await session.execute(stmt_latest_inq)
+            latest_inq = res_latest_inq.scalar_one_or_none()
+
+            stmt_user_history = (
+                select(ChatMessage)
+                .where(
+                    ChatMessage.user_id == u.id,
+                    ChatMessage.sender_type == "user",
+                )
+                .order_by(ChatMessage.created_at.desc())
+                .limit(10)
+            )
+            res_user_history = await session.execute(stmt_user_history)
+            chat_history = list(reversed(res_user_history.scalars().all()))
+            chat_summary = cls.build_chat_summary(chat_history)
+            inquiry_summary = chat_summary
+            if not inquiry_summary and latest_inq:
+                inquiry_summary = (
+                    latest_inq.question_text
+                    or latest_inq.stt_transcript
+                    or ""
+                ).strip()[:300] or None
+
             dialogs.append(
                 {
                     "user_id": u.id,
@@ -224,6 +298,9 @@ class ChatService:
                     "last_sender": last_sender or "user",
                     "last_time": last_time or (u.created_at.isoformat() if u.created_at else None),
                     "total_messages": total_msgs,
+                    "inquiry_summary": inquiry_summary,
+                    "detected_category": latest_inq.detected_category if latest_inq else None,
+                    "risk_level": latest_inq.risk_level if latest_inq else None,
                 }
             )
 

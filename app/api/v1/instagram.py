@@ -84,6 +84,8 @@ async def handle_instagram_webhook_events(
         # 2. Check for Direct messaging events (Skills 2-9)
         messaging_events = entry.get("messaging") or []
         for event in messaging_events:
+            if event.get("message", {}).get("is_echo"):
+                continue
             sender_id = str(event.get("sender", {}).get("id") or "")
             message_data = event.get("message") or {}
 

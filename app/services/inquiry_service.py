@@ -3,6 +3,7 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.attachment import Attachment
@@ -10,6 +11,7 @@ from app.db.models.inquiry import Inquiry
 from app.db.models.user import User
 from app.services.ai.document import DocumentParser
 from app.services.ai.llm_client import LegalAnalysisResult, LLMService
+from app.services.ai.pii_masker import PIIMasker
 from app.services.ai.rag import RAGService
 from app.services.ai.speech import SpeechService
 from app.services.chat_service import ChatService
@@ -20,6 +22,67 @@ logger = logging.getLogger(__name__)
 
 class InquiryService:
     """Orchestrates legal inquiries, express audits, and multimodal processing."""
+
+    @staticmethod
+    def _is_greeting_only(question_text: str) -> bool:
+        normalized = " ".join(question_text.lower().strip().split())
+        greetings = (
+            "assalomu alaykum",
+            "assalom",
+            "salom",
+            "привет",
+            "здравствуйте",
+        )
+        stripped = normalized
+        for punctuation in (".", ",", "!", "?"):
+            stripped = stripped.strip(punctuation)
+        return stripped in greetings
+
+    async def get_approved_response_examples(
+        self,
+        session: AsyncSession,
+        question_text: str,
+        language: str,
+        limit: int = 5,
+    ) -> str | None:
+        """Retrieve lawyer-approved answers to guide future response style."""
+        stmt = (
+            select(Inquiry)
+            .where(
+                Inquiry.status == "approved",
+                Inquiry.final_response.is_not(None),
+            )
+            .order_by(Inquiry.created_at.desc())
+            .limit(limit * 3)
+        )
+        result = await session.execute(stmt)
+        inquiries = result.scalars().all()
+
+        if not inquiries:
+            return None
+
+        greeting_only = self._is_greeting_only(question_text)
+        examples: list[str] = []
+        for inquiry in inquiries:
+            response = (inquiry.final_response or "").strip()
+            if not response:
+                continue
+            source_question = (inquiry.question_text or inquiry.stt_transcript or "").strip()
+            if greeting_only and not self._is_greeting_only(source_question):
+                continue
+            examples.append(
+                f"Murojaat: {source_question or 'Yo‘q'}\n"
+                f"Advokat javobi: {response}"
+            )
+            if len(examples) >= limit:
+                break
+
+        if not examples:
+            return None
+
+        return "\n\n".join(
+            PIIMasker.redact_financial(example) for example in examples
+        )
 
     def __init__(
         self,
@@ -61,6 +124,12 @@ class InquiryService:
             "Ofis qoidasi: Aniq manzil va uchrashuv faqat «Malakali yurist va advokatdan ofisda ko'rishib konsultatsiya olish» xizmati uchun to'lov tasdiqlangach taqdim etiladi."
         )
 
+        approved_response_examples = await self.get_approved_response_examples(
+            session=session,
+            question_text=question_text,
+            language=user.language,
+        )
+
         # Generate legal response with Undetectable AI Persona and conversation history
         analysis = await self.llm.analyze_legal_inquiry(
             question=question_text,
@@ -68,6 +137,7 @@ class InquiryService:
             rag_context=rag_context,
             conversation_history=history_context,
             firm_profile=firm_profile,
+            approved_response_examples=approved_response_examples,
         )
 
         # Decrement free question credit only for genuine legal inquiries

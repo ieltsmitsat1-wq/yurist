@@ -84,6 +84,43 @@ async def test_inquiry_debouncer_flush_immediately():
     assert called[0][0].text == "Yuridik savol"
 
 
+def test_chat_service_build_chat_summary_from_history():
+    """Build CRM inquiry summary from user chat messages instead of the latest inquiry field."""
+    messages = [
+        ChatMessage(
+            user_id=1,
+            telegram_id=111,
+            sender_type="bot",
+            text="Qaysi shartnomangiz bo'yicha savol?",
+        ),
+        ChatMessage(
+            user_id=1,
+            telegram_id=111,
+            sender_type="user",
+            text="Assalomu alaykum",
+        ),
+        ChatMessage(
+            user_id=1,
+            telegram_id=111,
+            sender_type="user",
+            text="Ijaraga bergan ofisimdagi shartnoma muddatidan oldin bekor qilindi",
+        ),
+        ChatMessage(
+            user_id=1,
+            telegram_id=111,
+            sender_type="user",
+            text="Shartnoma auditini olmoqchiman",
+        ),
+    ]
+
+    summary = ChatService.build_chat_summary(messages)
+
+    assert summary is not None
+    assert "shartnoma" in summary.lower()
+    assert "Ijaraga bergan" in summary
+    assert "Assalomu alaykum" not in summary
+
+
 @pytest.mark.asyncio
 async def test_chat_service_recent_history_context_formatting():
     """Verify ChatService formats past messages chronologically with role labels and timestamps."""
@@ -166,6 +203,12 @@ async def test_llm_service_includes_conversation_history_in_prompt():
     assert res.risk_level == "medium"
 
 
+def test_greeting_only_detection():
+    """Ensure approved greeting style is only reused for greeting-only messages."""
+    assert InquiryService._is_greeting_only("Assalomu alaykum!") is True
+    assert InquiryService._is_greeting_only("Assalomu alaykum, shartnoma masalasi bor") is False
+
+
 @pytest.mark.asyncio
 async def test_inquiry_service_fetches_and_passes_history():
     """Verify InquiryService loads history context and passes it to LLMService."""
@@ -202,6 +245,9 @@ async def test_inquiry_service_fetches_and_passes_history():
     orig_decrement = UserService.decrement_question
     UserService.decrement_question = AsyncMock()
 
+    orig_approved_examples = InquiryService.get_approved_response_examples
+    InquiryService.get_approved_response_examples = AsyncMock(return_value=None)
+
     try:
         _inquiry, analysis = await inquiry_service.process_text_inquiry(
             session=session,
@@ -216,6 +262,7 @@ async def test_inquiry_service_fetches_and_passes_history():
     finally:
         ChatService.get_recent_history_context = orig_get_history
         UserService.decrement_question = orig_decrement
+        InquiryService.get_approved_response_examples = orig_approved_examples
 
 
 @pytest.mark.asyncio
