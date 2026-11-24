@@ -22,6 +22,12 @@ router = APIRouter(prefix="/instagram", tags=["instagram"])
 _instagram_service = InstagramAutomationService()
 
 
+@router.get("/diagnostics")
+async def instagram_diagnostics() -> dict[str, Any]:
+    """Return non-sensitive runtime diagnostics for the Instagram integration."""
+    return _instagram_service.get_diagnostics()
+
+
 @router.get("/webhook", response_class=PlainTextResponse)
 async def verify_instagram_webhook(
     hub_mode: str | None = Query(default=None, alias="hub.mode"),

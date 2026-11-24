@@ -51,6 +51,22 @@ class InstagramAutomationService:
         self.conversion_skill = conversion_skill or LeadConversionSkill()
         self.trigger_skill = trigger_skill or StoryAndAdsTriggerSkill()
         self._resolved_business_account_id: str | None = None
+        self._diagnostics: dict[str, Any] = {
+            "webhook_events": 0,
+            "direct_messages": 0,
+            "last_inbound_sender": None,
+            "last_inbound_text": None,
+            "last_outbound_success": None,
+            "last_graph_error": None,
+            "resolved_account_id": None,
+        }
+
+    def get_diagnostics(self) -> dict[str, Any]:
+        """Return non-sensitive Instagram integration diagnostics."""
+        return {
+            **self._diagnostics,
+            "resolved_account_id": self._resolved_business_account_id,
+        }
 
     def verify_webhook(self, mode: str | None, token: str | None, challenge: str | None) -> str | None:
         """Verify Meta Webhook subscription token and return challenge string if valid."""
@@ -104,6 +120,13 @@ class InstagramAutomationService:
     ) -> list[str]:
         """Process an incoming Instagram Direct Message (text, voice, stories, or ad referrals)."""
         start_time = time.time()
+        self._diagnostics["webhook_events"] += 1
+        self._diagnostics["direct_messages"] += 1
+        self._diagnostics["last_inbound_sender"] = sender_id
+        self._diagnostics["last_inbound_text"] = (
+            str(message_data.get("text") or "")[:200]
+            or ("[attachment]" if message_data.get("attachments") else None)
+        )
 
         # Skill 7: Check if lawyer manual takeover pause is active
         if redis_client is not None:
@@ -450,9 +473,17 @@ class InstagramAutomationService:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 resp = await client.request(method, url, json=json_body, headers=headers)
                 if resp.status_code in (200, 201):
+                    self._diagnostics["last_outbound_success"] = True
+                    self._diagnostics["last_graph_error"] = None
                     return True
 
                 response_text = resp.text[:500]
+                self._diagnostics["last_outbound_success"] = False
+                self._diagnostics["last_graph_error"] = {
+                    "endpoint": endpoint,
+                    "status": resp.status_code,
+                    "response": response_text,
+                }
                 logger.error(
                     "Meta Graph API request failed: endpoint=%s status=%d response=%s",
                     endpoint,
@@ -461,6 +492,12 @@ class InstagramAutomationService:
                 )
                 return False
         except Exception as e:  # noqa: BLE001
+            self._diagnostics["last_outbound_success"] = False
+            self._diagnostics["last_graph_error"] = {
+                "endpoint": endpoint,
+                "status": None,
+                "response": str(e),
+            }
             logger.error("Meta Graph API request error to %s: %s", url, e)
             return False
 
@@ -494,6 +531,7 @@ class InstagramAutomationService:
                     if account_id:
                         self._resolved_business_account_id = account_id
                         settings.INSTAGRAM_BUSINESS_ACCOUNT_ID = account_id
+                        self._diagnostics["resolved_account_id"] = account_id
                         logger.info("Resolved Instagram Business Account ID: %s", account_id)
                         return account_id
         except Exception as exc:  # noqa: BLE001
